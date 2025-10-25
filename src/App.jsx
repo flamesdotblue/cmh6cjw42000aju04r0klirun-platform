@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import TopNav from './components/TopNav';
-import DashboardStats from './components/DashboardStats';
-import WorkforceManager from './components/WorkforceManager';
-import AttendancePanel from './components/AttendancePanel';
+import Landing from './components/Landing';
+import TopBar from './components/TopBar';
+import Login from './components/Login';
+import Dashboard from './components/Dashboard';
 
 function dateKeyFromDate(d) {
   const dt = new Date(d);
@@ -12,6 +12,9 @@ function dateKeyFromDate(d) {
 }
 
 export default function App() {
+  // appView: 'home' | 'login' | 'dashboard'
+  const [appView, setAppView] = useState('home');
+
   const [employees, setEmployees] = useState([]);
   // attendance: { [yyyy-mm-dd]: { [employeeId]: { in, out, inNote, outNote } } }
   const [attendance, setAttendance] = useState({});
@@ -31,17 +34,20 @@ export default function App() {
       const ev = JSON.parse(localStorage.getItem('hrkecil_evaluations') || '{}');
       const authSaved = JSON.parse(localStorage.getItem('hrkecil_auth') || '{"level":"public"}');
       const pinSaved = localStorage.getItem('hrkecil_admin_pin') || '1234';
+      const viewSaved = localStorage.getItem('hrkecil_view') || 'home';
       setEmployees(Array.isArray(emp) ? emp : []);
       setAttendance(att && typeof att === 'object' ? att : {});
       setEvaluations(ev && typeof ev === 'object' ? ev : {});
       setAuth(authSaved && typeof authSaved === 'object' ? authSaved : { level: 'public' });
       setAdminPin(pinSaved);
+      setAppView(viewSaved);
     } catch (e) {
       setEmployees([]);
       setAttendance({});
       setEvaluations({});
       setAuth({ level: 'public' });
       setAdminPin('1234');
+      setAppView('home');
     }
   }, []);
 
@@ -60,6 +66,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('hrkecil_admin_pin', adminPin);
   }, [adminPin]);
+  useEffect(() => {
+    localStorage.setItem('hrkecil_view', appView);
+  }, [appView]);
 
   const addEmployee = (emp) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -89,6 +98,7 @@ export default function App() {
     });
     if (auth.level === 'employee' && auth.employeeId === id) {
       setAuth({ level: 'public' });
+      setAppView('login');
     }
   };
 
@@ -160,95 +170,83 @@ export default function App() {
   const currentDayAttendance = attendance[dateKeyFromDate(selectedDate)] || {};
 
   const findEmployee = (id) => employees.find((e) => e.id === id);
-  const currentEmployee = auth.level === 'employee' ? findEmployee(auth.employeeId) : null;
 
-  const isAdmin = auth.level === 'admin';
-  const isManager = auth.level === 'employee' && (currentEmployee?.role === 'Manager' || currentEmployee?.role === 'Supervisor');
-  const isStaff = auth.level === 'employee' && currentEmployee && !isManager && currentEmployee.role !== 'Intern';
-  const isIntern = auth.level === 'employee' && currentEmployee?.role === 'Intern';
-
-  const perms = {
-    canManageEmployees: isAdmin || isManager,
-    canManageInterns: isAdmin || isManager,
-    canExport: isAdmin || isManager,
+  const handleAdminLogin = (pin) => {
+    if (pin === adminPin) {
+      setAuth({ level: 'admin' });
+      setAppView('dashboard');
+    } else {
+      alert('PIN Admin salah');
+    }
   };
+
+  const handleEmployeeLogin = (employeeId, pin) => {
+    const emp = findEmployee(employeeId);
+    if (!emp) return alert('Karyawan tidak ditemukan');
+    if (String(emp.pin || '') === String(pin)) {
+      setAuth({ level: 'employee', employeeId });
+      setAppView('dashboard');
+    } else {
+      alert('PIN salah');
+    }
+  };
+
+  const handleLogout = () => {
+    setAuth({ level: 'public' });
+    setAppView('login');
+  };
+
+  const role = auth.level === 'employee' ? findEmployee(auth.employeeId)?.role : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
-      <TopNav
+      <TopBar
         auth={auth}
-        employees={employees}
-        adminPin={adminPin}
-        onAdminLogin={(pin) => {
-          if (pin === adminPin) setAuth({ level: 'admin' });
-          else alert('PIN Admin salah');
-        }}
-        onEmployeeLogin={(employeeId, pin) => {
-          const emp = findEmployee(employeeId);
-          if (!emp) return alert('Karyawan tidak ditemukan');
-          if (String(emp.pin || '') === String(pin)) {
-            setAuth({ level: 'employee', employeeId });
-          } else {
-            alert('PIN salah');
-          }
-        }}
-        onLogout={() => setAuth({ level: 'public' })}
-        onUpdateAdminPin={(newPin) => setAdminPin(newPin)}
-        isAdmin={isAdmin}
+        role={role}
+        onNavigate={(view) => setAppView(view)}
+        onLogout={handleLogout}
       />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
-        <section className="bg-white/80 backdrop-blur rounded-2xl shadow-lg p-6 sm:p-8 border border-slate-100">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-            <div>
-              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard</h2>
-              <p className="text-sm text-slate-500">Akses: {isAdmin ? 'Admin' : isManager ? 'Manager' : isStaff ? 'Staff' : isIntern ? 'Magang' : 'Publik'}</p>
-            </div>
-            <input
-              type="date"
-              className="rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400 w-[200px]"
-              value={dateKeyFromDate(selectedDate)}
-              onChange={(e) => setSelectedDate(new Date(e.target.value + 'T00:00:00'))}
-            />
-          </div>
-          <DashboardStats stats={stats} />
-        </section>
+      {appView === 'home' && (
+        <Landing onGetStarted={() => setAppView('login')} />
+      )}
 
-        <section id="main" className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
-            <h3 className="text-xl font-semibold mb-4">Manajemen Tenaga Kerja</h3>
-            <WorkforceManager
-              employees={employees}
-              onAdd={perms.canManageEmployees || perms.canManageInterns ? addEmployee : () => {}}
-              onUpdate={perms.canManageEmployees || perms.canManageInterns ? updateEmployee : () => {}}
-              onDelete={perms.canManageEmployees || perms.canManageInterns ? deleteEmployee : () => {}}
-              attendanceAll={attendance}
-              evaluations={evaluations}
-              onAddEvaluation={perms.canManageInterns ? addEvaluation : () => {}}
-              onDeleteEvaluation={perms.canManageInterns ? deleteEvaluation : () => {}}
-              onConvertIntern={perms.canManageInterns ? convertInternToEmployee : () => {}}
-              permissions={perms}
-            />
-          </div>
+      {appView === 'login' && (
+        <main className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
+          <Login
+            employees={employees}
+            onAdminLogin={handleAdminLogin}
+            onEmployeeLogin={handleEmployeeLogin}
+            onBackHome={() => setAppView('home')}
+            onChangeAdminPin={(newPin) => setAdminPin(newPin)}
+            isAdminLevel={auth.level === 'admin'}
+          />
+        </main>
+      )}
 
-          <div id="attendance" className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
-            <h3 className="text-xl font-semibold mb-4">Absensi</h3>
-            <AttendancePanel
-              mode={auth}
-              employees={employees}
-              date={selectedDate}
-              attendanceMap={currentDayAttendance}
-              onClockIn={clockIn}
-              onClockOut={clockOut}
-              allAttendance={attendance}
-            />
-          </div>
-        </section>
-
-        <footer className="py-10 text-center text-slate-500">
-          <p className="text-sm">© {new Date().getFullYear()} HRKecil. Dibuat untuk UMKM 5–50 karyawan.</p>
-        </footer>
-      </main>
+      {appView === 'dashboard' && (
+        <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+          <Dashboard
+            auth={auth}
+            role={role}
+            stats={stats}
+            selectedDate={selectedDate}
+            onChangeDate={(d) => setSelectedDate(d)}
+            employees={employees}
+            attendance={attendance}
+            attendanceMap={currentDayAttendance}
+            onAddEmployee={addEmployee}
+            onUpdateEmployee={updateEmployee}
+            onDeleteEmployee={deleteEmployee}
+            onClockIn={clockIn}
+            onClockOut={clockOut}
+            evaluations={evaluations}
+            onAddEvaluation={addEvaluation}
+            onDeleteEvaluation={deleteEvaluation}
+            onConvertIntern={convertInternToEmployee}
+          />
+        </main>
+      )}
     </div>
   );
 }
