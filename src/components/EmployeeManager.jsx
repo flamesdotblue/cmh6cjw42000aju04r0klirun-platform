@@ -1,19 +1,22 @@
 import { useMemo, useState } from 'react';
 import { Search, ArrowUpDown, Trash2, PencilLine } from 'lucide-react';
 
-function EmployeeRow({ emp, onEdit, onDelete }) {
+function EmployeeRow({ emp, onEdit, onDelete, isAdmin }) {
   return (
     <div className="grid grid-cols-12 items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200">
       <div className="col-span-4">
         <div className="font-medium">{emp.name}</div>
         <div className="text-xs text-slate-500">{emp.email}</div>
+        {emp.role === 'Intern' ? (
+          <div className="text-[11px] text-amber-600 mt-1">Intern • Supervisor: {emp.supervisor || '-'}</div>
+        ) : null}
       </div>
       <div className="col-span-2 text-sm">{emp.role}</div>
       <div className="col-span-2 text-sm text-slate-600">{emp.startDate}</div>
       <div className="col-span-2 text-sm text-slate-600">{emp.targetHours} jam</div>
       <div className="col-span-2 flex justify-end gap-2">
-        <button onClick={() => onEdit(emp)} className="px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1"><PencilLine size={14}/>Edit</button>
-        <button onClick={() => onDelete(emp.id)} className="px-3 py-1.5 rounded-md bg-rose-500 text-white hover:bg-rose-600 inline-flex items-center gap-1"><Trash2 size={14}/>Hapus</button>
+        <button onClick={() => onEdit(emp)} disabled={!isAdmin} className="px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1 disabled:opacity-50"><PencilLine size={14}/>Edit</button>
+        <button onClick={() => onDelete(emp.id)} disabled={!isAdmin} className="px-3 py-1.5 rounded-md bg-rose-500 text-white hover:bg-rose-600 inline-flex items-center gap-1 disabled:opacity-50"><Trash2 size={14}/>Hapus</button>
       </div>
     </div>
   );
@@ -21,7 +24,18 @@ function EmployeeRow({ emp, onEdit, onDelete }) {
 
 function EmployeeForm({ initial, onCancel, onSubmit, existingEmails }) {
   const [form, setForm] = useState(
-    initial || { name: '', email: '', role: 'Staff', startDate: new Date().toISOString().slice(0, 10), pin: '', targetHours: 8 }
+    initial || {
+      name: '',
+      email: '',
+      role: 'Staff',
+      startDate: new Date().toISOString().slice(0, 10),
+      pin: '',
+      targetHours: 8,
+      supervisor: '',
+      internshipStart: '',
+      internshipEnd: '',
+      weeklyTargetHours: 20,
+    }
   );
   const isEdit = Boolean(initial && initial.id);
 
@@ -31,13 +45,16 @@ function EmployeeForm({ initial, onCancel, onSubmit, existingEmails }) {
     if (!emailLower) return false;
     const exists = existingEmails.has(emailLower);
     if (!isEdit) return !exists;
-    // if editing, allow same email as initial
     const initLower = (initial?.email || '').trim().toLowerCase();
     return emailLower === initLower || !exists;
   }, [existingEmails, form.email, initial, isEdit]);
 
   const canSubmit = useMemo(() => {
-    return form.name.trim().length > 1 && emailValid && emailUnique && String(form.pin || '').length >= 4 && Number(form.targetHours) > 0;
+    const base = form.name.trim().length > 1 && emailValid && emailUnique && String(form.pin || '').length >= 4 && Number(form.targetHours) > 0;
+    if (form.role === 'Intern') {
+      return base && Number(form.weeklyTargetHours) > 0;
+    }
+    return base;
   }, [form, emailValid, emailUnique]);
 
   return (
@@ -45,7 +62,7 @@ function EmployeeForm({ initial, onCancel, onSubmit, existingEmails }) {
       onSubmit={(e) => {
         e.preventDefault();
         if (!canSubmit) return;
-        onSubmit({ ...form, targetHours: Number(form.targetHours) });
+        onSubmit({ ...form, targetHours: Number(form.targetHours), weeklyTargetHours: Number(form.weeklyTargetHours) });
       }}
       className="space-y-4"
     >
@@ -121,6 +138,49 @@ function EmployeeForm({ initial, onCancel, onSubmit, existingEmails }) {
             placeholder="8"
           />
         </div>
+        {form.role === 'Intern' ? (
+          <>
+            <div>
+              <label className="block text-sm font-medium mb-1">Supervisor</label>
+              <input
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                value={form.supervisor}
+                onChange={(e) => setForm({ ...form, supervisor: e.target.value })}
+                placeholder="Nama supervisor"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Target Jam/Minggu</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                value={form.weeklyTargetHours}
+                onChange={(e) => setForm({ ...form, weeklyTargetHours: e.target.value })}
+                placeholder="20"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Periode Magang - Mulai</label>
+              <input
+                type="date"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                value={form.internshipStart}
+                onChange={(e) => setForm({ ...form, internshipStart: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Periode Magang - Selesai</label>
+              <input
+                type="date"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-400"
+                value={form.internshipEnd}
+                onChange={(e) => setForm({ ...form, internshipEnd: e.target.value })}
+              />
+            </div>
+          </>
+        ) : null}
       </div>
       <div className="flex items-center gap-3">
         <button
@@ -172,8 +232,8 @@ export default function EmployeeManager({ employees, onAdd, onUpdate, onDelete, 
   };
 
   const exportEmployeesCSV = () => {
-    const rows = [['Nama', 'Email', 'Jabatan', 'Mulai', 'Target Jam/Hari']];
-    employees.forEach((e) => rows.push([e.name, e.email, e.role, e.startDate, String(e.targetHours || 8)]));
+    const rows = [['Nama', 'Email', 'Jabatan', 'Mulai', 'Target Jam/Hari', 'Supervisor', 'Target Jam/Minggu', 'Periode Mulai', 'Periode Selesai']];
+    employees.forEach((e) => rows.push([e.name, e.email, e.role, e.startDate, String(e.targetHours || 8), e.supervisor || '', String(e.weeklyTargetHours || ''), e.internshipStart || '', e.internshipEnd || '']));
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -243,7 +303,7 @@ export default function EmployeeManager({ employees, onAdd, onUpdate, onDelete, 
               <div className="px-4 py-6 text-sm text-slate-500">Belum ada data karyawan.</div>
             ) : (
               pageData.map((emp) => (
-                <EmployeeRow key={emp.id} emp={emp} onEdit={isAdmin ? setEditing : () => {}} onDelete={isAdmin ? onDelete : () => {}} />
+                <EmployeeRow key={emp.id} emp={emp} onEdit={setEditing} onDelete={onDelete} isAdmin={isAdmin} />
               ))
             )}
           </div>

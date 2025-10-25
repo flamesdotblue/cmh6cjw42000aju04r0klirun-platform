@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import TopNav from './components/TopNav';
-import DashboardStats from './components/DashboardStats';
-import WorkforceManager from './components/WorkforceManager';
+import EmployeeManager from './components/EmployeeManager';
 import AttendancePanel from './components/AttendancePanel';
+import InternPanel from './components/InternPanel';
 
 function dateKeyFromDate(d) {
   const dt = new Date(d);
@@ -11,29 +11,50 @@ function dateKeyFromDate(d) {
   return local.toISOString().slice(0, 10);
 }
 
+function weekStartMonday(date) {
+  const d = new Date(date);
+  const day = (d.getDay() + 6) % 7; // Mon=0..Sun=6
+  const start = new Date(d);
+  start.setDate(d.getDate() - day);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
 export default function App() {
   const [employees, setEmployees] = useState([]);
   // attendance: { [yyyy-mm-dd]: { [employeeId]: { in, out, inNote, outNote } } }
   const [attendance, setAttendance] = useState({});
-
   // auth mode: { type: 'admin' } | { type: 'staff', employeeId }
   const [auth, setAuth] = useState({ type: 'admin' });
-
-  // selected date for viewing/recording attendance
   const [selectedDate, setSelectedDate] = useState(() => new Date());
+  // leaves: array
+  const [leaves, setLeaves] = useState([]);
+  // learning logs: array
+  const [learningLogs, setLearningLogs] = useState([]);
+  // timesheet approvals: { [employeeId_weekStartKey]: { status, submittedAt, approvedBy, approvedAt } }
+  const [timesheetApprovals, setTimesheetApprovals] = useState({});
 
   useEffect(() => {
     try {
       const emp = JSON.parse(localStorage.getItem('hrkecil_employees') || '[]');
       const att = JSON.parse(localStorage.getItem('hrkecil_attendance') || '{}');
       const authSaved = JSON.parse(localStorage.getItem('hrkecil_auth') || '{"type":"admin"}');
+      const lv = JSON.parse(localStorage.getItem('hrkecil_leaves') || '[]');
+      const logs = JSON.parse(localStorage.getItem('hrkecil_learning_logs') || '[]');
+      const ts = JSON.parse(localStorage.getItem('hrkecil_timesheet_approvals') || '{}');
       setEmployees(Array.isArray(emp) ? emp : []);
       setAttendance(att && typeof att === 'object' ? att : {});
       setAuth(authSaved && typeof authSaved === 'object' ? authSaved : { type: 'admin' });
+      setLeaves(Array.isArray(lv) ? lv : []);
+      setLearningLogs(Array.isArray(logs) ? logs : []);
+      setTimesheetApprovals(ts && typeof ts === 'object' ? ts : {});
     } catch (e) {
       setEmployees([]);
       setAttendance({});
       setAuth({ type: 'admin' });
+      setLeaves([]);
+      setLearningLogs([]);
+      setTimesheetApprovals({});
     }
   }, []);
 
@@ -46,6 +67,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('hrkecil_auth', JSON.stringify(auth));
   }, [auth]);
+  useEffect(() => {
+    localStorage.setItem('hrkecil_leaves', JSON.stringify(leaves));
+  }, [leaves]);
+  useEffect(() => {
+    localStorage.setItem('hrkecil_learning_logs', JSON.stringify(learningLogs));
+  }, [learningLogs]);
+  useEffect(() => {
+    localStorage.setItem('hrkecil_timesheet_approvals', JSON.stringify(timesheetApprovals));
+  }, [timesheetApprovals]);
 
   const addEmployee = (emp) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -66,6 +96,15 @@ export default function App() {
           copy[day] = rest;
         }
       }
+      return copy;
+    });
+    setLeaves((prev) => prev.filter((l) => l.employeeId !== id));
+    setLearningLogs((prev) => prev.filter((l) => l.employeeId !== id));
+    setTimesheetApprovals((prev) => {
+      const copy = { ...prev };
+      Object.keys(copy).forEach((k) => {
+        if (k.startsWith(id + '_')) delete copy[k];
+      });
       return copy;
     });
     if (auth.type === 'staff' && auth.employeeId === id) {
@@ -103,6 +142,53 @@ export default function App() {
     });
   };
 
+  // Leaves
+  const createLeave = (payload) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setLeaves((prev) => [
+      ...prev,
+      {
+        id,
+        employeeId: payload.employeeId,
+        type: payload.type,
+        dateFrom: payload.dateFrom,
+        dateTo: payload.dateTo,
+        reason: payload.reason || '',
+        status: 'Pending',
+        createdAt: Date.now(),
+      },
+    ]);
+  };
+  const reviewLeave = (leaveId, action, reviewerName) => {
+    setLeaves((prev) =>
+      prev.map((l) =>
+        l.id === leaveId
+          ? { ...l, status: action === 'approve' ? 'Approved' : 'Rejected', reviewedBy: reviewerName, reviewedAt: Date.now() }
+          : l
+      )
+    );
+  };
+
+  // Learning logs
+  const addLearningLog = (employeeId, date, content) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    setLearningLogs((prev) => [...prev, { id, employeeId, date: dateKeyFromDate(date), content, createdAt: Date.now() }]);
+  };
+  const commentLearningLog = (logId, comment, reviewerName) => {
+    setLearningLogs((prev) => prev.map((l) => (l.id === logId ? { ...l, comment, reviewedBy: reviewerName, reviewedAt: Date.now() } : l)));
+  };
+
+  // Timesheet approvals
+  const timesheetKey = (employeeId, weekStartDate) => `${employeeId}_${dateKeyFromDate(weekStartDate)}`;
+  const submitTimesheet = (employeeId, weekStartDate) => {
+    const key = timesheetKey(employeeId, weekStartDate);
+    setTimesheetApprovals((prev) => ({ ...prev, [key]: { status: 'Pending', submittedAt: Date.now() } }));
+  };
+  const approveTimesheet = (employeeId, weekStartDate, reviewerName, approve = true) => {
+    const key = timesheetKey(employeeId, weekStartDate);
+    setTimesheetApprovals((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), status: approve ? 'Approved' : 'Rejected', approvedBy: reviewerName, approvedAt: Date.now() } }));
+  };
+
   const stats = useMemo(() => {
     const key = dateKeyFromDate(selectedDate);
     const day = attendance[key] || {};
@@ -115,9 +201,45 @@ export default function App() {
     };
   }, [attendance, employees, selectedDate]);
 
+  const reviewerName = useMemo(() => {
+    if (auth.type === 'admin') return 'Admin';
+    const emp = employees.find((e) => e.id === auth.employeeId);
+    return emp ? emp.name : 'Staff';
+  }, [auth, employees]);
+
   const currentDayAttendance = attendance[dateKeyFromDate(selectedDate)] || {};
 
-  const getEmployeeById = (id) => employees.find((e) => e.id === id);
+  const exportWeekCSV = (employeeId, weekStart) => {
+    const start = weekStartMonday(weekStart);
+    const rows = [['Tanggal', 'Masuk', 'Pulang', 'Durasi (jam)']];
+    const emp = employees.find((e) => e.id === employeeId);
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = dateKeyFromDate(d);
+      const rec = (attendance[key] || {})[employeeId] || {};
+      const inTs = rec.in;
+      const outTs = rec.out;
+      const ms = inTs && outTs ? Math.max(0, outTs - inTs) : 0;
+      const h = (ms / 3600000).toFixed(2);
+      rows.push([
+        key,
+        inTs ? new Date(inTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-',
+        outTs ? new Date(outTs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-',
+        ms ? h : '0',
+      ]);
+    }
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `timesheet_${emp?.name || employeeId}_${dateKeyFromDate(start)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const isAdmin = auth.type === 'admin';
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
@@ -132,8 +254,8 @@ export default function App() {
         <section className="bg-white/80 backdrop-blur rounded-2xl shadow-lg p-6 sm:p-8 border border-slate-100">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div>
-              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard Admin</h2>
-              <p className="text-sm text-slate-500">Mode: {auth.type === 'admin' ? 'Admin' : `Staff — ${getEmployeeById(auth.employeeId)?.name || ''}`}</p>
+              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard</h2>
+              <p className="text-sm text-slate-500">Mode: {isAdmin ? 'Admin' : 'Staff'}{!isAdmin ? ` — ${employees.find(e=>e.id===auth.employeeId)?.name || ''}` : ''}</p>
             </div>
             <input
               type="date"
@@ -142,22 +264,35 @@ export default function App() {
               onChange={(e) => setSelectedDate(new Date(e.target.value + 'T00:00:00'))}
             />
           </div>
-          <DashboardStats stats={stats} />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="p-4 rounded-xl border border-slate-100 bg-white shadow-sm">
+              <div className="text-sm text-slate-500">Total Karyawan</div>
+              <div className="mt-1 text-3xl font-semibold tracking-tight">{stats.totalEmployees}</div>
+            </div>
+            <div className="p-4 rounded-xl border border-slate-100 bg-white shadow-sm">
+              <div className="text-sm text-slate-500">Hadir (Tanggal Dipilih)</div>
+              <div className="mt-1 text-3xl font-semibold tracking-tight">{stats.presentToday}</div>
+            </div>
+            <div className="p-4 rounded-xl border border-slate-100 bg-white shadow-sm">
+              <div className="text-sm text-slate-500">Sudah Clock-out</div>
+              <div className="mt-1 text-3xl font-semibold tracking-tight">{stats.clockedOutToday}</div>
+            </div>
+          </div>
         </section>
 
-        <section id="main" className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <section className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
-            <h3 className="text-xl font-semibold mb-4">Manajemen Tenaga Kerja</h3>
-            <WorkforceManager
+            <h3 className="text-xl font-semibold mb-4">Manajemen Karyawan</h3>
+            <EmployeeManager
               employees={employees}
               onAdd={addEmployee}
               onUpdate={updateEmployee}
               onDelete={deleteEmployee}
-              isAdmin={auth.type === 'admin'}
+              isAdmin={isAdmin}
             />
           </div>
 
-          <div id="attendance" className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
+          <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
             <h3 className="text-xl font-semibold mb-4">Absensi</h3>
             <AttendancePanel
               mode={auth}
@@ -167,6 +302,29 @@ export default function App() {
               onClockIn={clockIn}
               onClockOut={clockOut}
               allAttendance={attendance}
+            />
+          </div>
+        </section>
+
+        <section className="mt-10">
+          <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
+            <h3 className="text-xl font-semibold mb-4">Panel Intern</h3>
+            <InternPanel
+              mode={auth}
+              employees={employees}
+              attendance={attendance}
+              date={selectedDate}
+              leaves={leaves}
+              onCreateLeave={createLeave}
+              onApproveLeave={(leaveId) => reviewLeave(leaveId, 'approve', reviewerName)}
+              onRejectLeave={(leaveId) => reviewLeave(leaveId, 'reject', reviewerName)}
+              learningLogs={learningLogs}
+              onAddLearningLog={addLearningLog}
+              onCommentLearningLog={(logId, comment) => commentLearningLog(logId, comment, reviewerName)}
+              timesheetApprovals={timesheetApprovals}
+              onSubmitTimesheet={submitTimesheet}
+              onApproveTimesheet={(employeeId, weekStart, approve) => approveTimesheet(employeeId, weekStart, reviewerName, approve)}
+              exportWeekCSV={exportWeekCSV}
             />
           </div>
         </section>
