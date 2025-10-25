@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import TopNav from './components/TopNav';
 import DashboardStats from './components/DashboardStats';
-import EmployeeManager from './components/EmployeeManager';
+import WorkforceManager from './components/WorkforceManager';
 import AttendancePanel from './components/AttendancePanel';
 
 function dateKeyFromDate(d) {
@@ -147,8 +147,8 @@ export default function App() {
 
         <section id="main" className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
-            <h3 className="text-xl font-semibold mb-4">Manajemen Karyawan</h3>
-            <EmployeeManager
+            <h3 className="text-xl font-semibold mb-4">Manajemen Tenaga Kerja</h3>
+            <WorkforceManager
               employees={employees}
               onAdd={addEmployee}
               onUpdate={updateEmployee}

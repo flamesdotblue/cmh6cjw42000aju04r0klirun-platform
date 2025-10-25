@@ -23,22 +23,29 @@ function diffHours(inTs, outTs) {
 export default function AttendancePanel({ mode, employees, date, attendanceMap, onClockIn, onClockOut, allAttendance }) {
   const [selected, setSelected] = useState(employees[0]?.id || '');
   const [note, setNote] = useState('');
+  const [internOnly, setInternOnly] = useState(false);
 
   const isAdmin = mode.type === 'admin';
   const activeEmployeeId = isAdmin ? selected : mode.employeeId;
 
+  const filteredEmployees = useMemo(() => {
+    return internOnly ? employees.filter((e) => e.role === 'Intern') : employees;
+  }, [employees, internOnly]);
+
   const todayRows = useMemo(() => {
     const map = attendanceMap || {};
-    return employees.map((e) => ({
+    const source = filteredEmployees;
+    return source.map((e) => ({
       id: e.id,
       name: e.name,
+      role: e.role,
       targetHours: Number(e.targetHours || 8),
       in: map[e.id]?.in || null,
       out: map[e.id]?.out || null,
       inNote: map[e.id]?.inNote || '',
       outNote: map[e.id]?.outNote || '',
     }));
-  }, [attendanceMap, employees]);
+  }, [attendanceMap, filteredEmployees]);
 
   const selectedRec = attendanceMap[activeEmployeeId] || {};
 
@@ -51,15 +58,15 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
   const exportAttendanceCSV = (fromDate, toDate) => {
     const fromKey = dateKeyFromDate(fromDate);
     const toKey = dateKeyFromDate(toDate);
-    // gather keys in range
     const keys = Object.keys(allAttendance || {}).filter((k) => k >= fromKey && k <= toKey).sort();
-    const rows = [['Tanggal', 'Nama', 'Email', 'Jabatan', 'Masuk', 'Pulang', 'Durasi (jam)', 'Catatan Masuk', 'Catatan Pulang']];
+    const rows = [["Tanggal","Nama","Email","Jabatan","Masuk","Pulang","Durasi (jam)","Catatan Masuk","Catatan Pulang"]];
     const empMap = new Map(employees.map((e) => [e.id, e]));
     keys.forEach((k) => {
       const day = allAttendance[k] || {};
       Object.entries(day).forEach(([empId, rec]) => {
         const emp = empMap.get(empId);
         if (!emp) return;
+        if (internOnly && emp.role !== 'Intern') return;
         const hours = diffHours(rec.in, rec.out);
         rows.push([
           k,
@@ -79,7 +86,7 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `attendance_${fromKey}_${toKey}.csv`;
+    a.download = `attendance_${internOnly ? 'interns_' : ''}${fromKey}_${toKey}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -92,7 +99,13 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
       <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
           <div className="sm:col-span-2">
-            <label className="block text-sm font-medium mb-1">{isAdmin ? 'Pilih Karyawan' : 'Karyawan'}</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium">{isAdmin ? 'Pilih Karyawan' : 'Karyawan'}</label>
+              <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                <input type="checkbox" checked={internOnly} onChange={(e)=>setInternOnly(e.target.checked)} />
+                Hanya Magang
+              </label>
+            </div>
             {isAdmin ? (
               <select
                 value={selected}
@@ -100,7 +113,7 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
               >
                 <option value="" disabled>-- pilih --</option>
-                {employees.map((e) => (
+                {filteredEmployees.map((e) => (
                   <option key={e.id} value={e.id}>{e.name} — {e.role}</option>
                 ))}
               </select>
@@ -164,6 +177,7 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="text-left font-medium px-4 py-2">Nama</th>
+                <th className="text-left font-medium px-4 py-2">Jabatan</th>
                 <th className="text-left font-medium px-4 py-2">Masuk</th>
                 <th className="text-left font-medium px-4 py-2">Pulang</th>
                 <th className="text-left font-medium px-4 py-2">Durasi</th>
@@ -175,7 +189,7 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
             <tbody className="divide-y divide-slate-100">
               {rowsWithOvertime.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-6 text-slate-500 text-center">
+                  <td colSpan={8} className="px-4 py-6 text-slate-500 text-center">
                     Tambahkan karyawan untuk mulai mencatat absensi.
                   </td>
                 </tr>
@@ -183,6 +197,7 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
                 rowsWithOvertime.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium">{r.name}</td>
+                    <td className="px-4 py-2">{r.role}</td>
                     <td className="px-4 py-2">{formatTime(r.in)}</td>
                     <td className="px-4 py-2">{formatTime(r.out)}</td>
                     <td className="px-4 py-2">{r.out ? `${r.hours.toFixed(2)} jam` : '-'}</td>
