@@ -1,41 +1,51 @@
 import { useEffect, useMemo, useState } from 'react';
-import HeroCover from './components/HeroCover';
+import TopNav from './components/TopNav';
 import DashboardStats from './components/DashboardStats';
 import EmployeeManager from './components/EmployeeManager';
 import AttendancePanel from './components/AttendancePanel';
 
-function todayKey() {
-  const d = new Date();
-  const tzOffset = d.getTimezoneOffset();
-  const local = new Date(d.getTime() - tzOffset * 60000);
+function dateKeyFromDate(d) {
+  const dt = new Date(d);
+  const tz = dt.getTimezoneOffset();
+  const local = new Date(dt.getTime() - tz * 60000);
   return local.toISOString().slice(0, 10);
 }
 
-function App() {
+export default function App() {
   const [employees, setEmployees] = useState([]);
+  // attendance: { [yyyy-mm-dd]: { [employeeId]: { in, out, inNote, outNote } } }
   const [attendance, setAttendance] = useState({});
 
-  // Load from localStorage
+  // auth mode: { type: 'admin' } | { type: 'staff', employeeId }
+  const [auth, setAuth] = useState({ type: 'admin' });
+
+  // selected date for viewing/recording attendance
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+
   useEffect(() => {
     try {
       const emp = JSON.parse(localStorage.getItem('hrkecil_employees') || '[]');
       const att = JSON.parse(localStorage.getItem('hrkecil_attendance') || '{}');
+      const authSaved = JSON.parse(localStorage.getItem('hrkecil_auth') || '{"type":"admin"}');
       setEmployees(Array.isArray(emp) ? emp : []);
       setAttendance(att && typeof att === 'object' ? att : {});
+      setAuth(authSaved && typeof authSaved === 'object' ? authSaved : { type: 'admin' });
     } catch (e) {
       setEmployees([]);
       setAttendance({});
+      setAuth({ type: 'admin' });
     }
   }, []);
 
-  // Persist to localStorage
   useEffect(() => {
     localStorage.setItem('hrkecil_employees', JSON.stringify(employees));
   }, [employees]);
-
   useEffect(() => {
     localStorage.setItem('hrkecil_attendance', JSON.stringify(attendance));
   }, [attendance]);
+  useEffect(() => {
+    localStorage.setItem('hrkecil_auth', JSON.stringify(auth));
+  }, [auth]);
 
   const addEmployee = (emp) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -48,7 +58,6 @@ function App() {
 
   const deleteEmployee = (id) => {
     setEmployees((prev) => prev.filter((e) => e.id !== id));
-    // Optionally clean attendance records for this employee
     setAttendance((prev) => {
       const copy = { ...prev };
       for (const day of Object.keys(copy)) {
@@ -59,30 +68,35 @@ function App() {
       }
       return copy;
     });
+    if (auth.type === 'staff' && auth.employeeId === id) {
+      setAuth({ type: 'admin' });
+    }
   };
 
-  const clockIn = (employeeId) => {
-    const key = todayKey();
+  const clockIn = (employeeId, note, date) => {
+    const key = dateKeyFromDate(date || selectedDate);
     const ts = Date.now();
     setAttendance((prev) => {
       const day = { ...(prev[key] || {}) };
       const rec = day[employeeId] || {};
       if (!rec.in) {
         rec.in = ts;
+        if (note) rec.inNote = note;
       }
       day[employeeId] = rec;
       return { ...prev, [key]: day };
     });
   };
 
-  const clockOut = (employeeId) => {
-    const key = todayKey();
+  const clockOut = (employeeId, note, date) => {
+    const key = dateKeyFromDate(date || selectedDate);
     const ts = Date.now();
     setAttendance((prev) => {
       const day = { ...(prev[key] || {}) };
       const rec = day[employeeId] || {};
       if (rec.in && !rec.out) {
         rec.out = ts;
+        if (note) rec.outNote = note;
       }
       day[employeeId] = rec;
       return { ...prev, [key]: day };
@@ -90,7 +104,7 @@ function App() {
   };
 
   const stats = useMemo(() => {
-    const key = todayKey();
+    const key = dateKeyFromDate(selectedDate);
     const day = attendance[key] || {};
     const present = Object.values(day).filter((r) => r.in).length;
     const clockedOut = Object.values(day).filter((r) => r.out).length;
@@ -99,22 +113,39 @@ function App() {
       presentToday: present,
       clockedOutToday: clockedOut,
     };
-  }, [attendance, employees]);
+  }, [attendance, employees, selectedDate]);
+
+  const currentDayAttendance = attendance[dateKeyFromDate(selectedDate)] || {};
+
+  const getEmployeeById = (id) => employees.find((e) => e.id === id);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
-      <HeroCover />
+      <TopNav
+        auth={auth}
+        onLoginStaff={(employeeId) => setAuth({ type: 'staff', employeeId })}
+        onLogout={() => setAuth({ type: 'admin' })}
+        listEmployees={employees}
+      />
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 -mt-24 relative z-10">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
         <section className="bg-white/80 backdrop-blur rounded-2xl shadow-lg p-6 sm:p-8 border border-slate-100">
-          <div className="flex items-center justify-between gap-4 mb-6">
-            <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard Admin</h2>
-            <span className="text-sm text-slate-500">HRKecil • UMKM</span>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard Admin</h2>
+              <p className="text-sm text-slate-500">Mode: {auth.type === 'admin' ? 'Admin' : `Staff — ${getEmployeeById(auth.employeeId)?.name || ''}`}</p>
+            </div>
+            <input
+              type="date"
+              className="rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400 w-[200px]"
+              value={dateKeyFromDate(selectedDate)}
+              onChange={(e) => setSelectedDate(new Date(e.target.value + 'T00:00:00'))}
+            />
           </div>
           <DashboardStats stats={stats} />
         </section>
 
-        <section id="employees" className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <section id="main" className="mt-10 grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
             <h3 className="text-xl font-semibold mb-4">Manajemen Karyawan</h3>
             <EmployeeManager
@@ -122,16 +153,20 @@ function App() {
               onAdd={addEmployee}
               onUpdate={updateEmployee}
               onDelete={deleteEmployee}
+              isAdmin={auth.type === 'admin'}
             />
           </div>
 
           <div id="attendance" className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
-            <h3 className="text-xl font-semibold mb-4">Absensi Sederhana</h3>
+            <h3 className="text-xl font-semibold mb-4">Absensi</h3>
             <AttendancePanel
+              mode={auth}
               employees={employees}
-              attendance={attendance[todayKey()] || {}}
+              date={selectedDate}
+              attendanceMap={currentDayAttendance}
               onClockIn={clockIn}
               onClockOut={clockOut}
+              allAttendance={attendance}
             />
           </div>
         </section>
@@ -143,5 +178,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
