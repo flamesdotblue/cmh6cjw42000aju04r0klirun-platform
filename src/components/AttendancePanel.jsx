@@ -23,22 +23,31 @@ function diffHours(inTs, outTs) {
 export default function AttendancePanel({ mode, employees, date, attendanceMap, onClockIn, onClockOut, allAttendance }) {
   const [selected, setSelected] = useState(employees[0]?.id || '');
   const [note, setNote] = useState('');
+  const [internOnly, setInternOnly] = useState(false);
 
-  const isAdmin = mode.type === 'admin';
-  const activeEmployeeId = isAdmin ? selected : mode.employeeId;
+  const isAdmin = mode.level === 'admin';
+  const isEmployee = mode.level === 'employee';
+  const activeEmployeeId = isAdmin ? selected : isEmployee ? mode.employeeId : '';
+
+  const filteredEmployees = useMemo(() => {
+    const list = internOnly ? employees.filter((e) => e.role === 'Intern') : employees;
+    return list;
+  }, [employees, internOnly]);
 
   const todayRows = useMemo(() => {
     const map = attendanceMap || {};
-    return employees.map((e) => ({
+    const source = filteredEmployees;
+    return source.map((e) => ({
       id: e.id,
       name: e.name,
+      role: e.role,
       targetHours: Number(e.targetHours || 8),
       in: map[e.id]?.in || null,
       out: map[e.id]?.out || null,
       inNote: map[e.id]?.inNote || '',
       outNote: map[e.id]?.outNote || '',
     }));
-  }, [attendanceMap, employees]);
+  }, [attendanceMap, filteredEmployees]);
 
   const rowsWithOvertime = todayRows.map((r) => {
     const hours = diffHours(r.in, r.out);
@@ -46,20 +55,18 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
     return { ...r, hours, overtime };
   });
 
-  const [rangeFrom, setRangeFrom] = useState(dateKeyFromDate(date));
-  const [rangeTo, setRangeTo] = useState(dateKeyFromDate(date));
-
   const exportAttendanceCSV = (fromDate, toDate) => {
     const fromKey = dateKeyFromDate(fromDate);
     const toKey = dateKeyFromDate(toDate);
     const keys = Object.keys(allAttendance || {}).filter((k) => k >= fromKey && k <= toKey).sort();
-    const rows = [['Tanggal', 'Nama', 'Email', 'Jabatan', 'Masuk', 'Pulang', 'Durasi (jam)', 'Catatan Masuk', 'Catatan Pulang']];
+    const rows = [["Tanggal","Nama","Email","Jabatan","Masuk","Pulang","Durasi (jam)","Catatan Masuk","Catatan Pulang"]];
     const empMap = new Map(employees.map((e) => [e.id, e]));
     keys.forEach((k) => {
       const day = allAttendance[k] || {};
       Object.entries(day).forEach(([empId, rec]) => {
         const emp = empMap.get(empId);
         if (!emp) return;
+        if (internOnly && emp.role !== 'Intern') return;
         const hours = diffHours(rec.in, rec.out);
         rows.push([
           k,
@@ -79,63 +86,55 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `attendance_${fromKey}_${toKey}.csv`;
+    a.download = `attendance_${internOnly ? 'interns_' : ''}${fromKey}_${toKey}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  const [rangeFrom, setRangeFrom] = useState(dateKeyFromDate(date));
+  const [rangeTo, setRangeTo] = useState(dateKeyFromDate(date));
+
+  const canAct = Boolean(activeEmployeeId);
 
   return (
     <div className="space-y-6">
       <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
           <div className="sm:col-span-2">
-            <label className="block text-sm font-medium mb-1">{isAdmin ? 'Pilih Karyawan' : 'Karyawan'}</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium">{isAdmin ? 'Pilih Karyawan' : isEmployee ? 'Karyawan' : 'Login untuk absen'}</label>
+              <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                <input type="checkbox" checked={internOnly} onChange={(e)=>setInternOnly(e.target.checked)} />
+                Hanya Magang
+              </label>
+            </div>
             {isAdmin ? (
-              <select
-                value={selected}
-                onChange={(e) => setSelected(e.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-              >
-                <option value="" disabled>-- pilih --</option>
-                {employees.map((e) => (
+              <select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400">
+                <option value="">-- pilih --</option>
+                {filteredEmployees.map((e) => (
                   <option key={e.id} value={e.id}>{e.name} — {e.role}</option>
                 ))}
               </select>
+            ) : isEmployee ? (
+              <div className="px-3 py-2 bg-white rounded-lg border border-slate-300 text-sm">{employees.find((e) => e.id === activeEmployeeId)?.name}</div>
             ) : (
-              <div className="px-3 py-2 bg-white rounded-lg border border-slate-300 text-sm">{employees.find((e) => e.id === mode.employeeId)?.name}</div>
+              <div className="px-3 py-2 bg-white rounded-lg border border-slate-300 text-sm text-slate-500">Silakan login</div>
             )}
           </div>
           <div className="flex gap-2">
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Catatan (opsional)"
-              className="hidden sm:block flex-1 rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-            />
-            <button
-              onClick={() => (isAdmin ? selected : mode.employeeId) && onClockIn((isAdmin ? selected : mode.employeeId), note, date)}
-              disabled={!((isAdmin ? selected : mode.employeeId))}
-              className="flex-1 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-            >
-              Clock-in
-            </button>
-            <button
-              onClick={() => (isAdmin ? selected : mode.employeeId) && onClockOut((isAdmin ? selected : mode.employeeId), note, date)}
-              disabled={!((isAdmin ? selected : mode.employeeId))}
-              className="flex-1 px-4 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50"
-            >
-              Clock-out
-            </button>
+            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan (opsional)" className="hidden sm:block flex-1 rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400" />
+            <button onClick={() => canAct && onClockIn(activeEmployeeId, note, date)} disabled={!canAct} className="flex-1 px-4 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">Clock-in</button>
+            <button onClick={() => canAct && onClockOut(activeEmployeeId, note, date)} disabled={!canAct} className="flex-1 px-4 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50">Clock-out</button>
           </div>
         </div>
         <div className="sm:hidden mt-3">
-          <input
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Catatan (opsional)"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400"
-          />
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Catatan (opsional)" className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-slate-400" />
         </div>
+        {canAct ? (
+          <div className="mt-3 text-sm text-slate-600">
+            Status: masuk {formatTime(attendanceMap[activeEmployeeId]?.in)} • pulang {formatTime(attendanceMap[activeEmployeeId]?.out)}
+          </div>
+        ) : null}
       </div>
 
       <div>
@@ -156,29 +155,34 @@ export default function AttendancePanel({ mode, employees, date, attendanceMap, 
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="text-left font-medium px-4 py-2">Nama</th>
+                <th className="text-left font-medium px-4 py-2">Jabatan</th>
                 <th className="text-left font-medium px-4 py-2">Masuk</th>
                 <th className="text-left font-medium px-4 py-2">Pulang</th>
                 <th className="text-left font-medium px-4 py-2">Durasi</th>
                 <th className="text-left font-medium px-4 py-2">Target</th>
                 <th className="text-left font-medium px-4 py-2">Lembur</th>
+                <th className="text-left font-medium px-4 py-2">Catatan</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rowsWithOvertime.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-6 text-slate-500 text-center">
-                    Tambahkan karyawan untuk mulai mencatat absensi.
-                  </td>
+                  <td colSpan={8} className="px-4 py-6 text-slate-500 text-center">Tambahkan karyawan untuk mulai mencatat absensi.</td>
                 </tr>
               ) : (
                 rowsWithOvertime.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50">
                     <td className="px-4 py-2 font-medium">{r.name}</td>
+                    <td className="px-4 py-2">{r.role}</td>
                     <td className="px-4 py-2">{formatTime(r.in)}</td>
                     <td className="px-4 py-2">{formatTime(r.out)}</td>
                     <td className="px-4 py-2">{r.out ? `${r.hours.toFixed(2)} jam` : '-'}</td>
                     <td className="px-4 py-2">{r.targetHours.toFixed(2)} jam</td>
                     <td className="px-4 py-2">{r.out ? `${r.overtime.toFixed(2)} jam` : '-'}</td>
+                    <td className="px-4 py-2 max-w-[280px]">
+                      <div className="text-xs text-slate-600">In: {r.inNote || '-'}</div>
+                      <div className="text-xs text-slate-600">Out: {r.outNote || '-'}</div>
+                    </td>
                   </tr>
                 ))
               )}

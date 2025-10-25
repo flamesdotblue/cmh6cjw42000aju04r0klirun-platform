@@ -15,14 +15,13 @@ export default function App() {
   const [employees, setEmployees] = useState([]);
   // attendance: { [yyyy-mm-dd]: { [employeeId]: { in, out, inNote, outNote } } }
   const [attendance, setAttendance] = useState({});
-
   // evaluations: { [internId]: { records: [{ date, discipline, skill, communication, notes }] } }
   const [evaluations, setEvaluations] = useState({});
 
-  // auth mode: { type: 'admin' } | { type: 'staff', employeeId }
-  const [auth, setAuth] = useState({ type: 'admin' });
+  // auth: { level: 'public' | 'admin' | 'employee', employeeId?: string }
+  const [auth, setAuth] = useState({ level: 'public' });
+  const [adminPin, setAdminPin] = useState('1234');
 
-  // selected date for viewing/recording attendance
   const [selectedDate, setSelectedDate] = useState(() => new Date());
 
   useEffect(() => {
@@ -30,16 +29,19 @@ export default function App() {
       const emp = JSON.parse(localStorage.getItem('hrkecil_employees') || '[]');
       const att = JSON.parse(localStorage.getItem('hrkecil_attendance') || '{}');
       const ev = JSON.parse(localStorage.getItem('hrkecil_evaluations') || '{}');
-      const authSaved = JSON.parse(localStorage.getItem('hrkecil_auth') || '{"type":"admin"}');
+      const authSaved = JSON.parse(localStorage.getItem('hrkecil_auth') || '{"level":"public"}');
+      const pinSaved = localStorage.getItem('hrkecil_admin_pin') || '1234';
       setEmployees(Array.isArray(emp) ? emp : []);
       setAttendance(att && typeof att === 'object' ? att : {});
       setEvaluations(ev && typeof ev === 'object' ? ev : {});
-      setAuth(authSaved && typeof authSaved === 'object' ? authSaved : { type: 'admin' });
+      setAuth(authSaved && typeof authSaved === 'object' ? authSaved : { level: 'public' });
+      setAdminPin(pinSaved);
     } catch (e) {
       setEmployees([]);
       setAttendance({});
       setEvaluations({});
-      setAuth({ type: 'admin' });
+      setAuth({ level: 'public' });
+      setAdminPin('1234');
     }
   }, []);
 
@@ -55,6 +57,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('hrkecil_auth', JSON.stringify(auth));
   }, [auth]);
+  useEffect(() => {
+    localStorage.setItem('hrkecil_admin_pin', adminPin);
+  }, [adminPin]);
 
   const addEmployee = (emp) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
@@ -82,8 +87,8 @@ export default function App() {
       delete cp[id];
       return cp;
     });
-    if (auth.type === 'staff' && auth.employeeId === id) {
-      setAuth({ type: 'admin' });
+    if (auth.level === 'employee' && auth.employeeId === id) {
+      setAuth({ level: 'public' });
     }
   };
 
@@ -154,23 +159,50 @@ export default function App() {
 
   const currentDayAttendance = attendance[dateKeyFromDate(selectedDate)] || {};
 
-  const getEmployeeById = (id) => employees.find((e) => e.id === id);
+  const findEmployee = (id) => employees.find((e) => e.id === id);
+  const currentEmployee = auth.level === 'employee' ? findEmployee(auth.employeeId) : null;
+
+  const isAdmin = auth.level === 'admin';
+  const isManager = auth.level === 'employee' && (currentEmployee?.role === 'Manager' || currentEmployee?.role === 'Supervisor');
+  const isStaff = auth.level === 'employee' && currentEmployee && !isManager && currentEmployee.role !== 'Intern';
+  const isIntern = auth.level === 'employee' && currentEmployee?.role === 'Intern';
+
+  const perms = {
+    canManageEmployees: isAdmin || isManager,
+    canManageInterns: isAdmin || isManager,
+    canExport: isAdmin || isManager,
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
       <TopNav
         auth={auth}
-        onLoginStaff={(employeeId) => setAuth({ type: 'staff', employeeId })}
-        onLogout={() => setAuth({ type: 'admin' })}
-        listEmployees={employees}
+        employees={employees}
+        adminPin={adminPin}
+        onAdminLogin={(pin) => {
+          if (pin === adminPin) setAuth({ level: 'admin' });
+          else alert('PIN Admin salah');
+        }}
+        onEmployeeLogin={(employeeId, pin) => {
+          const emp = findEmployee(employeeId);
+          if (!emp) return alert('Karyawan tidak ditemukan');
+          if (String(emp.pin || '') === String(pin)) {
+            setAuth({ level: 'employee', employeeId });
+          } else {
+            alert('PIN salah');
+          }
+        }}
+        onLogout={() => setAuth({ level: 'public' })}
+        onUpdateAdminPin={(newPin) => setAdminPin(newPin)}
+        isAdmin={isAdmin}
       />
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
         <section className="bg-white/80 backdrop-blur rounded-2xl shadow-lg p-6 sm:p-8 border border-slate-100">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
             <div>
-              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard Admin</h2>
-              <p className="text-sm text-slate-500">Mode: {auth.type === 'admin' ? 'Admin' : `Staff — ${getEmployeeById(auth.employeeId)?.name || ''}`}</p>
+              <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight">Dashboard</h2>
+              <p className="text-sm text-slate-500">Akses: {isAdmin ? 'Admin' : isManager ? 'Manager' : isStaff ? 'Staff' : isIntern ? 'Magang' : 'Publik'}</p>
             </div>
             <input
               type="date"
@@ -187,15 +219,15 @@ export default function App() {
             <h3 className="text-xl font-semibold mb-4">Manajemen Tenaga Kerja</h3>
             <WorkforceManager
               employees={employees}
-              onAdd={addEmployee}
-              onUpdate={updateEmployee}
-              onDelete={deleteEmployee}
-              isAdmin={auth.type === 'admin'}
+              onAdd={perms.canManageEmployees || perms.canManageInterns ? addEmployee : () => {}}
+              onUpdate={perms.canManageEmployees || perms.canManageInterns ? updateEmployee : () => {}}
+              onDelete={perms.canManageEmployees || perms.canManageInterns ? deleteEmployee : () => {}}
               attendanceAll={attendance}
               evaluations={evaluations}
-              onAddEvaluation={addEvaluation}
-              onDeleteEvaluation={deleteEvaluation}
-              onConvertIntern={convertInternToEmployee}
+              onAddEvaluation={perms.canManageInterns ? addEvaluation : () => {}}
+              onDeleteEvaluation={perms.canManageInterns ? deleteEvaluation : () => {}}
+              onConvertIntern={perms.canManageInterns ? convertInternToEmployee : () => {}}
+              permissions={perms}
             />
           </div>
 
