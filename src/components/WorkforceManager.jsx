@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Search, ArrowUpDown, Trash2, PencilLine, Users, GraduationCap, FileDown, Plus, X, CheckCircle } from 'lucide-react';
+import { Search, ArrowUpDown, Trash2, PencilLine, Users, GraduationCap, FileDown, Plus, X, CheckCircle, RefreshCw } from 'lucide-react';
 
 function SectionHeader({ title, icon }) {
   const Icon = icon;
@@ -13,9 +13,12 @@ function SectionHeader({ title, icon }) {
   );
 }
 
-function RowActions({ onEdit, onDelete }) {
+function RowActions({ onEdit, onDelete, onConvert, isIntern }) {
   return (
     <div className="col-span-2 flex justify-end gap-2">
+      {isIntern ? (
+        <button onClick={onConvert} className="px-3 py-1.5 rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50 inline-flex items-center gap-1"><RefreshCw size={14}/>Konversi</button>
+      ) : null}
       <button onClick={onEdit} className="px-3 py-1.5 rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 inline-flex items-center gap-1"><PencilLine size={14}/>Edit</button>
       <button onClick={onDelete} className="px-3 py-1.5 rounded-md bg-rose-500 text-white hover:bg-rose-600 inline-flex items-center gap-1"><Trash2 size={14}/>Hapus</button>
     </div>
@@ -35,12 +38,12 @@ function EmployeeRow({ emp, onEdit, onDelete }) {
       <div className="col-span-2 text-sm">{emp.role}</div>
       <div className="col-span-2 text-sm text-slate-600">{emp.startDate}</div>
       <div className="col-span-2 text-sm text-slate-600">{Number(emp.targetHours || 8)} jam</div>
-      <RowActions onEdit={() => onEdit(emp)} onDelete={() => onDelete(emp.id)} />
+      <RowActions onEdit={() => onEdit(emp)} onDelete={() => onDelete(emp.id)} isIntern={false} />
     </div>
   );
 }
 
-function InternRow({ emp, onEdit, onDelete }) {
+function InternRow({ emp, onEdit, onDelete, onConvert }) {
   return (
     <div className="grid grid-cols-12 items-center gap-3 px-3 py-3 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-200">
       <div className="col-span-4">
@@ -53,7 +56,7 @@ function InternRow({ emp, onEdit, onDelete }) {
       <div className="col-span-2 text-sm">{emp.mentor || '-'}</div>
       <div className="col-span-2 text-sm text-slate-600">{emp.internshipStart || '-'} → {emp.internshipEnd || '-'}</div>
       <div className="col-span-2 text-sm text-slate-600">{emp.status || 'Aktif'}</div>
-      <RowActions onEdit={() => onEdit(emp)} onDelete={() => onDelete(emp.id)} />
+      <RowActions onEdit={() => onEdit(emp)} onDelete={() => onDelete(emp.id)} onConvert={() => onConvert(emp.id)} isIntern />
     </div>
   );
 }
@@ -292,7 +295,30 @@ function InternForm({ initial, onCancel, onSubmit, existingEmails }) {
   );
 }
 
-export default function WorkforceManager({ employees, onAdd, onUpdate, onDelete, isAdmin }) {
+function dateKeyFromDate(d) {
+  const dt = new Date(d);
+  const tz = dt.getTimezoneOffset();
+  const local = new Date(dt.getTime() - tz * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function diffHours(inTs, outTs) {
+  if (!inTs || !outTs) return 0;
+  const ms = Math.max(0, outTs - inTs);
+  return ms / 3600000;
+}
+
+function MondayOfWeek(d) {
+  const date = new Date(d);
+  const day = date.getDay(); // 0 Sun - 6 Sat
+  const diff = (day === 0 ? -6 : 1) - day; // back to Monday
+  const res = new Date(date);
+  res.setDate(date.getDate() + diff);
+  res.setHours(0,0,0,0);
+  return res;
+}
+
+export default function WorkforceManager({ employees, onAdd, onUpdate, onDelete, isAdmin, attendanceAll, evaluations, onAddEvaluation, onDeleteEvaluation, onConvertIntern }) {
   const [tab, setTab] = useState('employees');
   const [editing, setEditing] = useState(null);
   const [query, setQuery] = useState('');
@@ -300,6 +326,11 @@ export default function WorkforceManager({ employees, onAdd, onUpdate, onDelete,
   const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(1);
   const pageSize = 10;
+
+  const [evalInternId, setEvalInternId] = useState('');
+  const [evalDate, setEvalDate] = useState(() => dateKeyFromDate(new Date()));
+  const [scores, setScores] = useState({ discipline: 3, skill: 3, communication: 3, notes: '' });
+  const [weekStart, setWeekStart] = useState(() => dateKeyFromDate(MondayOfWeek(new Date())));
 
   const existingEmails = useMemo(() => new Set(employees.map((e) => e.email?.trim().toLowerCase()).filter(Boolean)), [employees]);
 
@@ -364,6 +395,56 @@ export default function WorkforceManager({ employees, onAdd, onUpdate, onDelete,
     URL.revokeObjectURL(url);
   };
 
+  const internOptions = useMemo(() => employees.filter(isIntern), [employees]);
+
+  const weeklyHoursForIntern = (internId, weekStartKey) => {
+    if (!internId) return 0;
+    const start = new Date(weekStartKey + 'T00:00:00');
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    const startKey = dateKeyFromDate(start);
+    const endKey = dateKeyFromDate(end);
+    let total = 0;
+    Object.keys(attendanceAll || {}).forEach((k) => {
+      if (k >= startKey && k <= endKey) {
+        const day = attendanceAll[k] || {};
+        const rec = day[internId];
+        if (rec) total += diffHours(rec.in, rec.out);
+      }
+    });
+    return total;
+  };
+
+  const evalRecords = useMemo(() => (evalInternId ? (evaluations[evalInternId]?.records || []) : []), [evaluations, evalInternId]);
+
+  const addEval = () => {
+    if (!evalInternId) return;
+    const record = {
+      date: evalDate,
+      discipline: Number(scores.discipline),
+      skill: Number(scores.skill),
+      communication: Number(scores.communication),
+      notes: scores.notes?.trim() || ''
+    };
+    onAddEvaluation(evalInternId, record);
+    setScores({ discipline: 3, skill: 3, communication: 3, notes: '' });
+  };
+
+  const exportEvalCSV = () => {
+    if (!evalInternId) return;
+    const intern = employees.find((e) => e.id === evalInternId);
+    const rows = [["Nama","Tanggal","Disiplin","Keterampilan","Komunikasi","Catatan"]];
+    (evalRecords || []).forEach((r) => rows.push([intern?.name || '', r.date, r.discipline, r.skill, r.communication, r.notes || '']));
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `evaluasi_${(intern?.name || 'intern').replace(/\s+/g,'_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div>
       <div className="mb-6">
@@ -373,21 +454,100 @@ export default function WorkforceManager({ employees, onAdd, onUpdate, onDelete,
         </div>
         {isAdmin ? (
           tab === 'interns' ? (
-            <div>
-              <SectionHeader title="Tambah/Edit Anak Magang" icon={GraduationCap} />
-              <InternForm
-                initial={editing?.role === 'Intern' ? editing : null}
-                onCancel={() => setEditing(null)}
-                onSubmit={(form) => {
-                  if (editing) {
-                    onUpdate(editing.id, form);
-                    setEditing(null);
-                  } else {
-                    onAdd(form);
-                  }
-                }}
-                existingEmails={existingEmails}
-              />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div>
+                <SectionHeader title="Tambah/Edit Anak Magang" icon={GraduationCap} />
+                <InternForm
+                  initial={editing?.role === 'Intern' ? editing : null}
+                  onCancel={() => setEditing(null)}
+                  onSubmit={(form) => {
+                    if (editing) {
+                      onUpdate(editing.id, form);
+                      setEditing(null);
+                    } else {
+                      onAdd(form);
+                    }
+                  }}
+                  existingEmails={existingEmails}
+                />
+              </div>
+              <div>
+                <SectionHeader title="Evaluasi & Rekap Mingguan" icon={GraduationCap} />
+                <div className="space-y-4 p-4 rounded-xl border border-slate-200 bg-slate-50/60">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Pilih Magang</label>
+                      <select value={evalInternId} onChange={(e)=>setEvalInternId(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white">
+                        <option value="">-- pilih --</option>
+                        {internOptions.map((i)=>(<option key={i.id} value={i.id}>{i.name} — {i.school || i.mentor || 'Magang'}</option>))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Awal Minggu (Senin)</label>
+                      <input type="date" value={weekStart} onChange={(e)=>setWeekStart(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" />
+                      <div className="text-xs text-slate-500 mt-1">Total jam minggu ini: <b>{evalInternId ? weeklyHoursForIntern(evalInternId, weekStart).toFixed(2) : '0.00'}</b></div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Tanggal</label>
+                      <input type="date" value={evalDate} onChange={(e)=>setEvalDate(e.target.value)} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Disiplin</label>
+                      <input type="number" min={1} max={5} value={scores.discipline} onChange={(e)=>setScores({...scores, discipline: e.target.value})} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Keterampilan</label>
+                      <input type="number" min={1} max={5} value={scores.skill} onChange={(e)=>setScores({...scores, skill: e.target.value})} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Komunikasi</label>
+                      <input type="number" min={1} max={5} value={scores.communication} onChange={(e)=>setScores({...scores, communication: e.target.value})} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Catatan</label>
+                    <textarea value={scores.notes} onChange={(e)=>setScores({...scores, notes: e.target.value})} className="w-full rounded-lg border border-slate-300 px-3 py-2 bg-white" rows={3} placeholder="Kesan, progress, rekomendasi..." />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={addEval} disabled={!evalInternId} className="px-4 py-2 rounded-lg bg-slate-900 text-white disabled:opacity-50">Simpan Evaluasi</button>
+                    <button onClick={exportEvalCSV} disabled={!evalInternId || (evalRecords.length===0)} className="px-4 py-2 rounded-lg border border-slate-200 hover:bg-slate-50">Ekspor Evaluasi</button>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 overflow-hidden">
+                    <table className="min-w-full bg-white text-sm">
+                      <thead className="bg-slate-50 text-slate-600">
+                        <tr>
+                          <th className="text-left font-medium px-3 py-2">Tanggal</th>
+                          <th className="text-left font-medium px-3 py-2">Disiplin</th>
+                          <th className="text-left font-medium px-3 py-2">Skill</th>
+                          <th className="text-left font-medium px-3 py-2">Komunikasi</th>
+                          <th className="text-left font-medium px-3 py-2">Catatan</th>
+                          <th className="text-right font-medium px-3 py-2">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {evalRecords.length === 0 ? (
+                          <tr><td colSpan={6} className="px-4 py-6 text-slate-500 text-center">Belum ada evaluasi.</td></tr>
+                        ) : (
+                          evalRecords.map((r, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50">
+                              <td className="px-3 py-2">{r.date}</td>
+                              <td className="px-3 py-2">{r.discipline}</td>
+                              <td className="px-3 py-2">{r.skill}</td>
+                              <td className="px-3 py-2">{r.communication}</td>
+                              <td className="px-3 py-2 max-w-[260px]"><div className="line-clamp-3">{r.notes || '-'}</div></td>
+                              <td className="px-3 py-2 text-right">
+                                <button onClick={()=>onDeleteEvaluation(evalInternId, idx)} className="px-2 py-1 rounded-md border border-slate-200 hover:bg-slate-50">Hapus</button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
           ) : (
             <div>
@@ -462,7 +622,7 @@ export default function WorkforceManager({ employees, onAdd, onUpdate, onDelete,
                   <div className="px-4 py-6 text-sm text-slate-500">Belum ada data magang.</div>
                 ) : (
                   pageData.map((emp) => (
-                    <InternRow key={emp.id} emp={emp} onEdit={isAdmin ? setEditing : () => {}} onDelete={isAdmin ? onDelete : () => {}} />
+                    <InternRow key={emp.id} emp={emp} onEdit={isAdmin ? setEditing : () => {}} onDelete={isAdmin ? onDelete : () => {}} onConvert={isAdmin ? onConvertIntern : () => {}} />
                   ))
                 )}
               </div>
