@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Shield, User } from 'lucide-react';
+import * as DB from './FakeDB';
 
 export default function Login({ employees, onAdminLogin, onEmployeeLogin, onBackHome, onChangeAdminPin, isAdminLevel }) {
   const [tab, setTab] = useState('employee');
@@ -14,6 +15,21 @@ export default function Login({ employees, onAdminLogin, onEmployeeLogin, onBack
   const [newAdminPin, setNewAdminPin] = useState('');
   const canAdminLogin = useMemo(() => adminPinInput.length >= 4, [adminPinInput]);
 
+  const useAdminDemo = async () => {
+    const pin = await DB.getAdminPin();
+    setTab('admin');
+    setAdminPinInput(pin);
+  };
+
+  const useEmployeeDemo = async () => {
+    const demo = employees.find((e) => e.email === 'manager@demo.local') || employees[0];
+    if (!demo) return;
+    const pin = String(demo.pin || '');
+    setTab('employee');
+    setSelectedEmp(demo.id);
+    setEmpPin(pin);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -24,6 +40,9 @@ export default function Login({ employees, onAdminLogin, onEmployeeLogin, onBack
       <div className="flex items-center gap-2">
         <button onClick={() => setTab('employee')} className={`px-3 py-2 rounded-lg border ${tab==='employee' ? 'bg-slate-900 text-white border-slate-900' : 'border-slate-200'}`}><User size={14}/> Karyawan</button>
         <button onClick={() => setTab('admin')} className={`px-3 py-2 rounded-lg border ${tab==='admin' ? 'bg-slate-900 text-white border-slate-900' : 'border-slate-200'}`}><Shield size={14}/> Admin</button>
+        <div className="flex-1" />
+        <button onClick={useEmployeeDemo} className="px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50">Gunakan Karyawan Demo</button>
+        <button onClick={useAdminDemo} className="px-3 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800">Gunakan Admin Demo</button>
       </div>
 
       {tab === 'employee' ? (

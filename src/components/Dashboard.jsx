@@ -342,7 +342,6 @@ function EvaluasiIntern({ interns, evaluations, onAdd, onDelete, canEdit }) {
 }
 
 export default function Dashboard({ auth, role, stats, selectedDate, onChangeDate, employees, attendance, attendanceMap, onAddEmployee, onUpdateEmployee, onDeleteEmployee, onClockIn, onClockOut, evaluations, onAddEvaluation, onDeleteEvaluation, onConvertIntern }) {
-  // Determine view and permissions
   const isAdmin = auth.level === 'admin';
   const isManager = auth.level === 'employee' && (role === 'Manager' || role === 'Supervisor');
   const isStaff = auth.level === 'employee' && role === 'Staff';
@@ -356,12 +355,10 @@ export default function Dashboard({ auth, role, stats, selectedDate, onChangeDat
     );
   }
 
-  // Admin Dashboard
   if (isAdmin) {
     return (
       <div className="space-y-10">
         <StatsHeader stats={stats} selectedDate={selectedDate} onChangeDate={onChangeDate} title="Dashboard Admin" />
-
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
             <h3 className="text-xl font-semibold mb-4">Manajemen Karyawan</h3>
@@ -376,7 +373,6 @@ export default function Dashboard({ auth, role, stats, selectedDate, onChangeDat
             </div>
           </div>
         </section>
-
         <section className="bg-white rounded-2xl shadow border border-slate-100 p-6 sm:p-7">
           <h3 className="text-xl font-semibold mb-4">Absensi Semua</h3>
           <AttendancePanel mode={auth} employees={employees} date={selectedDate} attendanceMap={attendanceMap} onClockIn={onClockIn} onClockOut={onClockOut} allAttendance={attendance} restrictToSelf={false} />
@@ -385,7 +381,6 @@ export default function Dashboard({ auth, role, stats, selectedDate, onChangeDat
     );
   }
 
-  // Manager/Supervisor Dashboard
   if (isManager) {
     return (
       <div className="space-y-10">
@@ -412,7 +407,6 @@ export default function Dashboard({ auth, role, stats, selectedDate, onChangeDat
     );
   }
 
-  // Staff Dashboard
   if (isStaff) {
     return (
       <div className="space-y-10">
@@ -425,7 +419,6 @@ export default function Dashboard({ auth, role, stats, selectedDate, onChangeDat
     );
   }
 
-  // Intern Dashboard
   if (isIntern) {
     return (
       <div className="space-y-10">

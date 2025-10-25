@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import Landing from './components/Landing';
 import TopBar from './components/TopBar';
+import Landing from './components/Landing';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
+import * as DB from './components/FakeDB';
 
 function dateKeyFromDate(d) {
   const dt = new Date(d);
@@ -12,147 +13,130 @@ function dateKeyFromDate(d) {
 }
 
 export default function App() {
-  // appView: 'home' | 'login' | 'dashboard'
-  const [appView, setAppView] = useState('home');
+  // Simple hash router: #/, #/login, #/dashboard
+  const [route, setRoute] = useState(() => window.location.hash.replace('#', '') || '/');
 
   const [employees, setEmployees] = useState([]);
-  // attendance: { [yyyy-mm-dd]: { [employeeId]: { in, out, inNote, outNote } } }
   const [attendance, setAttendance] = useState({});
-  // evaluations: { [internId]: { records: [{ date, discipline, skill, communication, notes }] } }
   const [evaluations, setEvaluations] = useState({});
+  const [adminPin, setAdminPin] = useState('1234');
 
   // auth: { level: 'public' | 'admin' | 'employee', employeeId?: string }
   const [auth, setAuth] = useState({ level: 'public' });
-  const [adminPin, setAdminPin] = useState('1234');
 
   const [selectedDate, setSelectedDate] = useState(() => new Date());
 
+  // Router listener
   useEffect(() => {
-    try {
-      const emp = JSON.parse(localStorage.getItem('hrkecil_employees') || '[]');
-      const att = JSON.parse(localStorage.getItem('hrkecil_attendance') || '{}');
-      const ev = JSON.parse(localStorage.getItem('hrkecil_evaluations') || '{}');
-      const authSaved = JSON.parse(localStorage.getItem('hrkecil_auth') || '{"level":"public"}');
-      const pinSaved = localStorage.getItem('hrkecil_admin_pin') || '1234';
-      const viewSaved = localStorage.getItem('hrkecil_view') || 'home';
-      setEmployees(Array.isArray(emp) ? emp : []);
-      setAttendance(att && typeof att === 'object' ? att : {});
-      setEvaluations(ev && typeof ev === 'object' ? ev : {});
-      setAuth(authSaved && typeof authSaved === 'object' ? authSaved : { level: 'public' });
-      setAdminPin(pinSaved);
-      setAppView(viewSaved);
-    } catch (e) {
-      setEmployees([]);
-      setAttendance({});
-      setEvaluations({});
-      setAuth({ level: 'public' });
-      setAdminPin('1234');
-      setAppView('home');
-    }
+    const onHash = () => setRoute(window.location.hash.replace('#', '') || '/');
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Initial load + seed demo database
   useEffect(() => {
-    localStorage.setItem('hrkecil_employees', JSON.stringify(employees));
-  }, [employees]);
-  useEffect(() => {
-    localStorage.setItem('hrkecil_attendance', JSON.stringify(attendance));
-  }, [attendance]);
-  useEffect(() => {
-    localStorage.setItem('hrkecil_evaluations', JSON.stringify(evaluations));
-  }, [evaluations]);
-  useEffect(() => {
-    localStorage.setItem('hrkecil_auth', JSON.stringify(auth));
-  }, [auth]);
-  useEffect(() => {
-    localStorage.setItem('hrkecil_admin_pin', adminPin);
-  }, [adminPin]);
-  useEffect(() => {
-    localStorage.setItem('hrkecil_view', appView);
-  }, [appView]);
+    (async () => {
+      await DB.seedDemoIfEmpty();
+      const [emp, att, ev, pin] = await Promise.all([
+        DB.getEmployees(),
+        DB.getAttendance(),
+        DB.getEvaluations(),
+        DB.getAdminPin(),
+      ]);
+      setEmployees(emp);
+      setAttendance(att);
+      setEvaluations(ev);
+      setAdminPin(pin);
+    })();
+  }, []);
 
-  const addEmployee = (emp) => {
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    setEmployees((prev) => [...prev, { ...emp, id }]);
+  // Persist writes from UI actions
+  const refreshFromDB = async () => {
+    const [emp, att, ev, pin] = await Promise.all([
+      DB.getEmployees(),
+      DB.getAttendance(),
+      DB.getEvaluations(),
+      DB.getAdminPin(),
+    ]);
+    setEmployees(emp);
+    setAttendance(att);
+    setEvaluations(ev);
+    setAdminPin(pin);
   };
 
-  const updateEmployee = (id, patch) => {
-    setEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-  };
+  const findEmployee = (id) => employees.find((e) => e.id === id);
 
-  const deleteEmployee = (id) => {
-    setEmployees((prev) => prev.filter((e) => e.id !== id));
-    setAttendance((prev) => {
-      const copy = { ...prev };
-      for (const day of Object.keys(copy)) {
-        if (copy[day] && copy[day][id]) {
-          const { [id]: _, ...rest } = copy[day];
-          copy[day] = rest;
-        }
-      }
-      return copy;
-    });
-    setEvaluations((prev) => {
-      const cp = { ...prev };
-      delete cp[id];
-      return cp;
-    });
-    if (auth.level === 'employee' && auth.employeeId === id) {
-      setAuth({ level: 'public' });
-      setAppView('login');
+  const role = auth.level === 'employee' ? findEmployee(auth.employeeId)?.role : null;
+
+  // Actions (DB-backed)
+  const handleAdminLogin = async (pin) => {
+    const ok = await DB.verifyAdminPin(pin);
+    if (ok) {
+      setAuth({ level: 'admin' });
+      window.location.hash = '/dashboard';
+    } else {
+      alert('PIN Admin salah');
     }
   };
 
-  const clockIn = (employeeId, note, date) => {
+  const handleEmployeeLogin = async (employeeId, pin) => {
+    const ok = await DB.verifyEmployeePin(employeeId, pin);
+    if (!ok) return alert('PIN salah atau karyawan tidak ditemukan');
+    setAuth({ level: 'employee', employeeId });
+    window.location.hash = '/dashboard';
+  };
+
+  const handleLogout = () => {
+    setAuth({ level: 'public' });
+    window.location.hash = '/login';
+  };
+
+  const handleChangeAdminPin = async (newPin) => {
+    await DB.setAdminPin(newPin);
+    await refreshFromDB();
+  };
+
+  const addEmployee = async (emp) => {
+    await DB.addEmployee(emp);
+    await refreshFromDB();
+  };
+
+  const updateEmployee = async (id, patch) => {
+    await DB.updateEmployee(id, patch);
+    await refreshFromDB();
+  };
+
+  const deleteEmployee = async (id) => {
+    await DB.deleteEmployee(id);
+    if (auth.level === 'employee' && auth.employeeId === id) setAuth({ level: 'public' });
+    await refreshFromDB();
+  };
+
+  const clockIn = async (employeeId, note, date) => {
     const key = dateKeyFromDate(date || selectedDate);
-    const ts = Date.now();
-    setAttendance((prev) => {
-      const day = { ...(prev[key] || {}) };
-      const rec = day[employeeId] || {};
-      if (!rec.in) {
-        rec.in = ts;
-        if (note) rec.inNote = note;
-      }
-      day[employeeId] = rec;
-      return { ...prev, [key]: day };
-    });
+    await DB.clockIn(employeeId, key, note);
+    await refreshFromDB();
   };
 
-  const clockOut = (employeeId, note, date) => {
+  const clockOut = async (employeeId, note, date) => {
     const key = dateKeyFromDate(date || selectedDate);
-    const ts = Date.now();
-    setAttendance((prev) => {
-      const day = { ...(prev[key] || {}) };
-      const rec = day[employeeId] || {};
-      if (rec.in && !rec.out) {
-        rec.out = ts;
-        if (note) rec.outNote = note;
-      }
-      day[employeeId] = rec;
-      return { ...prev, [key]: day };
-    });
+    await DB.clockOut(employeeId, key, note);
+    await refreshFromDB();
   };
 
-  const addEvaluation = (internId, record) => {
-    setEvaluations((prev) => {
-      const bag = prev[internId]?.records || [];
-      return { ...prev, [internId]: { records: [...bag, record] } };
-    });
+  const addEvaluation = async (internId, record) => {
+    await DB.addEvaluation(internId, record);
+    await refreshFromDB();
   };
 
-  const deleteEvaluation = (internId, idx) => {
-    setEvaluations((prev) => {
-      const bag = prev[internId]?.records || [];
-      const next = bag.filter((_, i) => i !== idx);
-      return { ...prev, [internId]: { records: next } };
-    });
+  const deleteEvaluation = async (internId, idx) => {
+    await DB.deleteEvaluation(internId, idx);
+    await refreshFromDB();
   };
 
-  const convertInternToEmployee = (internId) => {
-    setEmployees((prev) => prev.map((e) => {
-      if (e.id !== internId) return e;
-      const { school, mentor, internshipStart, internshipEnd, status, stipend, tasks, ...rest } = e;
-      return { ...rest, role: 'Staff' };
-    }));
+  const convertInternToEmployee = async (internId) => {
+    await DB.convertInternToEmployee(internId);
+    await refreshFromDB();
   };
 
   const stats = useMemo(() => {
@@ -167,64 +151,35 @@ export default function App() {
     };
   }, [attendance, employees, selectedDate]);
 
-  const currentDayAttendance = attendance[dateKeyFromDate(selectedDate)] || {};
-
-  const findEmployee = (id) => employees.find((e) => e.id === id);
-
-  const handleAdminLogin = (pin) => {
-    if (pin === adminPin) {
-      setAuth({ level: 'admin' });
-      setAppView('dashboard');
-    } else {
-      alert('PIN Admin salah');
-    }
-  };
-
-  const handleEmployeeLogin = (employeeId, pin) => {
-    const emp = findEmployee(employeeId);
-    if (!emp) return alert('Karyawan tidak ditemukan');
-    if (String(emp.pin || '') === String(pin)) {
-      setAuth({ level: 'employee', employeeId });
-      setAppView('dashboard');
-    } else {
-      alert('PIN salah');
-    }
-  };
-
-  const handleLogout = () => {
-    setAuth({ level: 'public' });
-    setAppView('login');
-  };
-
-  const role = auth.level === 'employee' ? findEmployee(auth.employeeId)?.role : null;
+  const attendanceMap = attendance[dateKeyFromDate(selectedDate)] || {};
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
       <TopBar
         auth={auth}
         role={role}
-        onNavigate={(view) => setAppView(view)}
+        onNavigate={(path) => (window.location.hash = path)}
         onLogout={handleLogout}
       />
 
-      {appView === 'home' && (
-        <Landing onGetStarted={() => setAppView('login')} />
+      {route === '/' && (
+        <Landing onGetStarted={() => (window.location.hash = '/login')} />
       )}
 
-      {appView === 'login' && (
+      {route === '/login' && (
         <main className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
           <Login
             employees={employees}
             onAdminLogin={handleAdminLogin}
             onEmployeeLogin={handleEmployeeLogin}
-            onBackHome={() => setAppView('home')}
-            onChangeAdminPin={(newPin) => setAdminPin(newPin)}
+            onBackHome={() => (window.location.hash = '/')}
+            onChangeAdminPin={handleChangeAdminPin}
             isAdminLevel={auth.level === 'admin'}
           />
         </main>
       )}
 
-      {appView === 'dashboard' && (
+      {route === '/dashboard' && (
         <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-8 pb-16">
           <Dashboard
             auth={auth}
@@ -234,7 +189,7 @@ export default function App() {
             onChangeDate={(d) => setSelectedDate(d)}
             employees={employees}
             attendance={attendance}
-            attendanceMap={currentDayAttendance}
+            attendanceMap={attendanceMap}
             onAddEmployee={addEmployee}
             onUpdateEmployee={updateEmployee}
             onDeleteEmployee={deleteEmployee}
